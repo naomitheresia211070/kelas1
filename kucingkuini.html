@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cat Clicker</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    /* Custom animations not covered by Tailwind utilities */
+    @keyframes bounce-in {
+      0%   { transform: scale(1); }
+      30%  { transform: scale(1.35) rotate(-8deg); }
+      60%  { transform: scale(0.9)  rotate(5deg); }
+      80%  { transform: scale(1.1)  rotate(-3deg); }
+      100% { transform: scale(1)   rotate(0deg); }
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0px); }
+      50%       { transform: translateY(-10px); }
+    }
+    @keyframes reaction-pop {
+      0%   { opacity: 0; transform: translateY(0)   scale(0.5); }
+      20%  { opacity: 1; transform: translateY(-10px) scale(1.2); }
+      80%  { opacity: 1; transform: translateY(-40px) scale(1); }
+      100% { opacity: 0; transform: translateY(-70px) scale(0.8); }
+    }
+    @keyframes hearts-fly {
+      0%   { opacity: 0; transform: translateY(0) scale(0); }
+      20%  { opacity: 1; transform: translateY(-15px) scale(1); }
+      100% { opacity: 0; transform: translateY(-80px) scale(0.5); }
+    }
+
+    .cat-idle      { animation: float 3s ease-in-out infinite; }
+    .cat-clicked   { animation: bounce-in 0.5s ease forwards; }
+    .reaction-text { animation: reaction-pop 1.2s ease forwards; }
+    .heart-fly     { animation: hearts-fly 1s ease forwards; }
+  </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-pink-100 via-purple-50 to-indigo-100 flex flex-col items-center justify-center font-sans select-none overflow-hidden">
+
+  <!-- Title -->
+  <h1 class="text-4xl font-extrabold text-purple-700 mb-2 tracking-tight drop-shadow">
+    🐱 Cat Clicker
+  </h1>
+  <p class="text-purple-400 text-sm mb-8">Click the cat to see its reactions!</p>
+
+  <!-- Main card -->
+  <div class="relative bg-white rounded-3xl shadow-2xl px-10 py-8 flex flex-col items-center gap-6 w-80">
+
+    <!-- Click counter -->
+    <div class="flex items-center gap-2">
+      <span class="text-gray-400 text-sm font-medium">Clicks:</span>
+      <span id="click-count"
+            class="text-2xl font-black text-purple-600 tabular-nums transition-all duration-100">
+        0
+      </span>
+    </div>
+
+    <!-- Mood bar -->
+    <div class="w-full">
+      <div class="flex justify-between text-xs text-gray-400 mb-1">
+        <span>Happiness</span>
+        <span id="mood-label" class="font-semibold text-purple-500">Calm</span>
+      </div>
+      <div class="w-full bg-purple-100 rounded-full h-3">
+        <div id="mood-bar"
+             class="bg-gradient-to-r from-pink-400 to-purple-500 h-3 rounded-full transition-all duration-500"
+             style="width: 30%">
+        </div>
+      </div>
+    </div>
+
+    <!-- Cat display area (reaction text floats here) -->
+    <div class="relative flex flex-col items-center" style="height:200px; width:200px;">
+
+      <!-- Floating reactions anchor above the cat -->
+      <div id="reaction-anchor" class="absolute top-0 left-1/2 -translate-x-1/2 pointer-events-none" style="width:0;height:0;"></div>
+
+      <!-- Cat emoji / art -->
+      <button
+        id="cat-btn"
+        aria-label="Click the cat"
+        class="cat-idle absolute bottom-0 left-1/2 -translate-x-1/2 cursor-pointer bg-transparent border-none outline-none focus:outline-none"
+        style="font-size:110px; line-height:1; user-select:none;">
+        😺
+      </button>
+    </div>
+
+    <!-- Last reaction label -->
+    <div class="text-center min-h-[2rem]">
+      <p class="text-sm text-gray-400">Last reaction:</p>
+      <p id="reaction-label" class="text-base font-semibold text-pink-500 mt-0.5 transition-all duration-200">
+        —
+      </p>
+    </div>
+
+    <!-- Reset button -->
+    <button
+      id="reset-btn"
+      class="mt-1 text-xs text-gray-300 hover:text-red-400 transition-colors duration-200 underline underline-offset-2">
+      Reset
+    </button>
+
+    <!-- Mute toggle -->
+    <button
+      id="mute-btn"
+      title="Toggle sound"
+      class="absolute top-3 right-4 text-xl opacity-50 hover:opacity-100 transition-opacity duration-200"
+      aria-label="Toggle sound">
+      🔊
+    </button>
+
+  </div>
+
+  <!-- Hint -->
+  <p class="mt-8 text-xs text-purple-300">Made with ❤️ &amp; Tailwind CSS</p>
+
+  <script>
+    // ─── Audio (Web Audio API — no files needed) ─────────────────────────────
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    let audioCtx = null;
+
+    function getCtx() {
+      if (!audioCtx) audioCtx = new AudioCtx();
+      return audioCtx;
+    }
+
+    // Generic tone builder
+    function playTone({ freq = 440, type = 'sine', duration = 0.15, volume = 0.3, detune = 0 }) {
+      const ctx = getCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, ctx.currentTime);
+      osc.detune.setValueAtTime(detune, ctx.currentTime);
+      gain.gain.setValueAtTime(volume, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + duration);
+    }
+
+    // Happy reaction: ascending chime ✨
+    function soundHappy() {
+      [523, 659, 784].forEach((freq, i) => {
+        setTimeout(() => playTone({ freq, type: 'triangle', duration: 0.25, volume: 0.25 }), i * 80);
+      });
+    }
+
+    // Grumpy reaction: low growl 😾
+    function soundGrumpy() {
+      playTone({ freq: 120, type: 'sawtooth', duration: 0.4, volume: 0.2 });
+      setTimeout(() => playTone({ freq: 100, type: 'sawtooth', duration: 0.3, volume: 0.15 }), 150);
+    }
+
+    // Shocked reaction: descending swoosh 🙀
+    function soundShocked() {
+      const ctx = getCtx();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'square';
+      osc.frequency.setValueAtTime(800, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(150, ctx.currentTime + 0.35);
+      gain.gain.setValueAtTime(0.15, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.4);
+    }
+
+    // Sad reaction: soft descending notes 😿
+    function soundSad() {
+      [392, 330, 262].forEach((freq, i) => {
+        setTimeout(() => playTone({ freq, type: 'sine', duration: 0.3, volume: 0.2 }), i * 120);
+      });
+    }
+
+    // Smug / neutral: short pop 😼
+    function soundPop() {
+      playTone({ freq: 600, type: 'sine', duration: 0.08, volume: 0.2 });
+      setTimeout(() => playTone({ freq: 900, type: 'sine', duration: 0.06, volume: 0.15 }), 60);
+    }
+
+    // Purring: rapid low trill 😺
+    function soundPurr() {
+      for (let i = 0; i < 6; i++) {
+        setTimeout(() => playTone({ freq: 180 + (i % 2) * 30, type: 'triangle', duration: 0.1, volume: 0.15 }), i * 55);
+      }
+    }
+
+    // Map each reaction emoji to a sound
+    const reactionSounds = {
+      '😻': soundHappy,
+      '😸': soundHappy,
+      '😹': soundHappy,
+      '🙀': soundShocked,
+      '😾': soundGrumpy,
+      '😿': soundSad,
+      '😼': soundPop,
+      '🐱': soundPop,
+      '😺': soundPurr,
+      '🐾': soundPop,
+    };
+
+    // ─── Data ───────────────────────────────────────────────────────────────
+    const reactions = [
+      { emoji: '😻', text: 'Heart eyes!',      mood: 95 },
+      { emoji: '😸', text: 'So happy!',         mood: 85 },
+      { emoji: '😹', text: 'LOL tears!',        mood: 80 },
+      { emoji: '🙀', text: 'SHOCKED!',          mood: 60 },
+      { emoji: '😾', text: 'Grumpy cat...',     mood: 20 },
+      { emoji: '😿', text: 'Sad meow 😢',       mood: 15 },
+      { emoji: '😼', text: 'Smug mode on.',     mood: 70 },
+      { emoji: '🐱', text: 'Just vibing~',      mood: 50 },
+      { emoji: '😺', text: 'Purring loudly!',   mood: 75 },
+      { emoji: '🐾', text: 'Paw attack!',       mood: 65 },
+    ];
+
+    const moodLabels = [
+      { min: 0,  label: 'Miserable',  color: 'text-red-400' },
+      { min: 20, label: 'Grumpy',     color: 'text-orange-400' },
+      { min: 40, label: 'Calm',       color: 'text-yellow-500' },
+      { min: 60, label: 'Happy',      color: 'text-green-500' },
+      { min: 80, label: 'Ecstatic!',  color: 'text-purple-500' },
+    ];
+
+    // ─── State ───────────────────────────────────────────────────────────────
+    let clicks = 0;
+    let currentMood = 30;
+
+    // ─── DOM refs ────────────────────────────────────────────────────────────
+    const catBtn       = document.getElementById('cat-btn');
+    const clickCount   = document.getElementById('click-count');
+    const moodBar      = document.getElementById('mood-bar');
+    const moodLabel    = document.getElementById('mood-label');
+    const reactionLabel= document.getElementById('reaction-label');
+    const reactionAnchor = document.getElementById('reaction-anchor');
+    const resetBtn     = document.getElementById('reset-btn');
+    const muteBtn      = document.getElementById('mute-btn');
+
+    // ─── Mute state ──────────────────────────────────────────────────────────
+    let muted = false;
+    muteBtn.addEventListener('click', () => {
+      muted = !muted;
+      muteBtn.textContent = muted ? '🔇' : '🔊';
+    });
+
+    // ─── Helpers ─────────────────────────────────────────────────────────────
+    function pickRandom(arr) {
+      return arr[Math.floor(Math.random() * arr.length)];
+    }
+
+    function getMoodInfo(value) {
+      let info = moodLabels[0];
+      for (const m of moodLabels) {
+        if (value >= m.min) info = m;
+      }
+      return info;
+    }
+
+    function updateMoodBar(targetMood) {
+      currentMood = Math.max(0, Math.min(100, targetMood));
+      moodBar.style.width = currentMood + '%';
+      const info = getMoodInfo(currentMood);
+      moodLabel.textContent = info.label;
+      // update label colour classes
+      moodLabel.className = `font-semibold ${info.color}`;
+    }
+
+    function spawnFloatingText(text) {
+      const el = document.createElement('span');
+      el.textContent = text;
+      el.className = 'reaction-text absolute text-2xl font-black text-pink-500 whitespace-nowrap pointer-events-none';
+      // centre it above the anchor
+      el.style.left = '50%';
+      el.style.transform = 'translateX(-50%)';
+      el.style.bottom = '0';
+      reactionAnchor.appendChild(el);
+      el.addEventListener('animationend', () => el.remove());
+    }
+
+    function spawnHearts() {
+      const heartEmojis = ['❤️','💜','💖','💗','🩷'];
+      for (let i = 0; i < 4; i++) {
+        setTimeout(() => {
+          const h = document.createElement('span');
+          h.textContent = pickRandom(heartEmojis);
+          h.className = 'heart-fly absolute text-xl pointer-events-none';
+          // random horizontal offset
+          const offset = (Math.random() - 0.5) * 120;
+          h.style.left = `calc(50% + ${offset}px)`;
+          h.style.bottom = '10px';
+          reactionAnchor.appendChild(h);
+          h.addEventListener('animationend', () => h.remove());
+        }, i * 80);
+      }
+    }
+
+    function animateCat(reactionEmoji) {
+      catBtn.classList.remove('cat-idle', 'cat-clicked');
+      // Force reflow so the class change triggers a new animation
+      void catBtn.offsetWidth;
+      catBtn.textContent = reactionEmoji;
+      catBtn.classList.add('cat-clicked');
+
+      // After bounce, restore idle animation
+      setTimeout(() => {
+        catBtn.classList.remove('cat-clicked');
+        catBtn.textContent = '😺';
+        catBtn.classList.add('cat-idle');
+      }, 600);
+    }
+
+    function flashCounter() {
+      clickCount.classList.add('scale-150', 'text-pink-500');
+      setTimeout(() => clickCount.classList.remove('scale-150', 'text-pink-500'), 200);
+    }
+
+    // ─── Main click handler ──────────────────────────────────────────────────
+    catBtn.addEventListener('click', () => {
+      clicks++;
+      clickCount.textContent = clicks;
+      flashCounter();
+
+      const reaction = pickRandom(reactions);
+
+      // Update mood: lerp toward reaction mood gradually
+      const targetMood = currentMood * 0.6 + reaction.mood * 0.4;
+      updateMoodBar(targetMood);
+
+      // Play matching sound
+      const sound = reactionSounds[reaction.emoji];
+      if (sound && !muted) sound();
+
+      // Cat animation
+      animateCat(reaction.emoji);
+
+      // Floating text
+      spawnFloatingText(reaction.emoji + ' ' + reaction.text);
+
+      // Hearts if very happy
+      if (reaction.mood >= 80) spawnHearts();
+
+      // Bottom label
+      reactionLabel.textContent = reaction.text;
+      reactionLabel.classList.add('scale-110');
+      setTimeout(() => reactionLabel.classList.remove('scale-110'), 200);
+    });
+
+    // ─── Reset ───────────────────────────────────────────────────────────────
+    resetBtn.addEventListener('click', () => {
+      clicks = 0;
+      clickCount.textContent = '0';
+      updateMoodBar(30);
+      reactionLabel.textContent = '—';
+      catBtn.textContent = '😺';
+      catBtn.classList.remove('cat-clicked');
+      catBtn.classList.add('cat-idle');
+    });
+  </script>
+</body>
+</html>
